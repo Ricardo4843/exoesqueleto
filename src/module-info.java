@@ -17,6 +17,5 @@ module exoesqueleto {
 	exports exoesqueleto.gui;
 	exports exoesqueleto.kinematics;
 	exports exoesqueleto.armor;
-	exports exoesqueleto.body;
 	exports exoesqueleto.bench;
 }

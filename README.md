@@ -1,24 +1,23 @@
 # Exoesqueleto 3D
 
-Proyecto personal de ampliación del [lab2 de ALED](https://github.com/Ricardo4843/ALED-lab2) (Recursividad: cinemática directa de un exoesqueleto). Usa la misma cinemática directa recursiva sobre un árbol de segmentos, pero en 3D y con un cuerpo humano real (creado con MakeHuman) que se dibuja como un holograma de decenas de miles de puntos y se mueve con el esqueleto. El código está comentado a fondo para que sirva también como material de estudio.
+Etapa 2 de la ampliación del [lab2 de ALED](https://github.com/Ricardo4843/ALED-lab2) (Recursividad: cinemática directa de un exoesqueleto). Usa la misma cinemática directa recursiva sobre un árbol de segmentos, pero en 3D, con un cuerpo humano completo y una "armadura" de decenas de miles de vértices encima. El código está comentado a fondo para que sirva también como material de estudio.
 
-![holograma](docs/holograma.png)
+![armadura](docs/captura.png) ![esqueleto](docs/esqueleto.png)
 
-| Caminando | Esqueleto dentro del holograma | Modo armadura |
+## Las tres etapas
+
+| Etapa | Repo | Qué es |
 |---|---|---|
-| ![caminando](docs/holograma-caminando.png) | ![esqueleto](docs/esqueleto.png) | ![armadura](docs/captura.png) |
+| 1 | [ALED-lab2](https://github.com/Ricardo4843/ALED-lab2) | La práctica: cinemática directa recursiva en 2D (15 segmentos, Swing) |
+| 2 | **exoesqueleto** (este) | El muñeco: la misma cinemática en 3D con matrices 4x4, cuerpo de 21 segmentos con armadura de tubos y benchmark recursivo vs iterativo |
+| 3 | [holograma](https://github.com/Ricardo4843/holograma) | El cuerpo real de MakeHuman como nube de puntos, con el esqueleto colocado automáticamente dentro |
 
 ## Cómo ejecutarlo
 
 - **Eclipse:** File > Import > General > Existing Projects into Workspace, y seleccionar esta carpeta. Run sobre `exoesqueleto.gui.ExoskeletonApp`. JavaFX 23 ya viene incluido en `lib/`. Hace falta un JDK 21 o superior.
 - **Terminal (PowerShell):** `.\run.ps1` abre el visor y `.\run.ps1 bench` lanza el benchmark. El script compila y lanza el programa con `JAVA_HOME` o, si no está definido, con el JDK que trae Eclipse.
 
-Controles:
-- Arrastrar el ratón para girar la cámara y la rueda para el zoom.
-- En el panel se elige una articulación y se mueve con los sliders. Los ejes que esa articulación no tiene salen bloqueados.
-- Botones para caminar y para volver a la postura de reposo.
-- Se pueden activar el holograma, la armadura y el esqueleto, solos o combinados.
-- Hay sliders para el número de puntos del holograma (de 10.000 a 300.000) y para el detalle de la armadura.
+Controles: arrastrar el ratón para girar la cámara y la rueda para el zoom. En el panel se elige la articulación y se mueve con los sliders (los ejes que no tiene esa articulación salen bloqueados). También hay botones para caminar y para la postura de reposo, para mostrar u ocultar la armadura y el esqueleto, y un slider para el detalle de la armadura (de unos 1.000 a unos 400.000 vértices).
 
 ## Qué cambia respecto al lab2
 
@@ -27,32 +26,14 @@ Controles:
 | `Segment`: longitud + 1 ángulo | `Segment`: longitud + rotación base fija + 3 ejes de articulación con límites (rodilla 1 eje, hombro 3) |
 | Se acumula `(x, y, ángulo)` | Se acumula una matriz homogénea 4x4 (`Matrix4`) |
 | `Node(x, y)` | `Node3D(x, y, z)` + orientación completa (frame) |
-| 15 segmentos leídos de fichero | Cuerpo completo de 21 segmentos, colocados automáticamente dentro del modelo 3D (`HumanSkeleton`, `MakeHumanRig`) |
+| 15 segmentos leídos de fichero | Cuerpo completo de 21 segmentos (`HumanSkeleton`) |
 | Swing 2D | JavaFX 3D |
 
-## Cómo funciona el holograma
+## La clave: esqueleto + malla, no 50.000 nodos
 
-1. **El cuerpo.** Es un modelo exportado de [MakeHuman](http://www.makehumancommunity.org/) en `.obj`, que `ObjMesh` lee. MakeHuman deforma siempre la misma malla base de 13.380 vértices, así que sus pesos de skinning (`default_weights.mhw`, licencia CC0) valen para cualquier cuerpo exportado. Para leer ese fichero hay un lector de JSON escrito a mano por descenso recursivo (`JsonParser`).
-2. **Las articulaciones.** No se colocan a mano. Alrededor de cada articulación hay un anillo de vértices que siguen a los dos huesos, y el centro de ese anillo es la articulación (`MakeHumanRig`). Con esas posiciones, `HumanSkeleton` calcula la longitud y la orientación de cada segmento. El esqueleto encaja en cualquier cuerpo que se exporte.
-3. **Los puntos.** Se reparten al azar por la superficie, eligiendo cada triángulo con probabilidad proporcional a su área (suma acumulada + búsqueda binaria). Así la densidad es uniforme. Cada punto hereda los pesos de su triángulo mediante coordenadas baricéntricas (`PointCloud`).
-4. **El movimiento.** La cinemática directa se calcula solo para los 21 segmentos, en microsegundos. Los puntos **no** son nodos del árbol: se mueven con *linear blend skinning*, `p = Σ wᵢ · Sᵢ · p₀` con `Sᵢ = Frame_actual · Frame_reposo⁻¹`.
-5. **El aspecto.** Los puntos son tetraedros diminutos con material autoiluminado. El resplandor es el efecto `Bloom` de JavaFX, aplicado a la vista 3D.
+Los vértices de la armadura **no** son nodos del árbol cinemático. La cinemática directa se calcula solo para los 21 segmentos (unos microsegundos) y luego cada vértice se mueve con la matriz de su hueso: `v = Frame_actual · Frame_reposo⁻¹ · v_reposo`. Cerca de cada articulación el vértice mezcla su hueso con el del padre (*linear blend skinning*), para que la armadura se doble en vez de abrirse. Es como lo hacen los videojuegos y el software de animación (`ArmorPiece`).
 
-### Rendimiento: de 5 a 60 FPS
-
-La primera versión recalculaba en Java cada punto en cada fotograma. Calcularlos costaba unos 4 ms, pero JavaFX tarda mucho en reprocesar una malla que cambia, y con 65.000 puntos iba a **5 FPS**.
-
-La solución sale de la propia fórmula. Con dos huesos, `w·Sa·p + (1−w)·Sb·p = (w·Sa + (1−w)·Sb)·p`: la media ponderada de dos matrices es otra matriz. Por eso los puntos se agrupan por pareja de huesos y por peso (redondeado a 1/16). Cada grupo es una malla quieta con una única transformación, que aplica la tarjeta gráfica. En cada fotograma solo se calculan unas 650 matrices.
-
-Resultado medido caminando:
-
-| Puntos | FPS antes | FPS ahora |
-|---|---|---|
-| 65.000 | 5 | ~59 |
-| 162.500 | 2 | ~59 |
-| 325.000 | – | ~42 |
-
-## Benchmark: ¿y si el árbol tuviera decenas de miles de nodos?
+## Benchmark: ¿y si el árbol sí tuviera decenas de miles de nodos?
 
 `BenchmarkFK` (resultados en mi portátil, 2026-10-04):
 
@@ -71,19 +52,14 @@ Conclusiones:
 ## Estructura
 
 - `src/exoesqueleto/kinematics/`: `Matrix4`, `Segment`, `Node3D`, `ForwardKinematics3D` (recursiva + iterativa), `HumanSkeleton`
-- `src/exoesqueleto/body/`: `ObjMesh` (lector de .obj), `JsonParser` (JSON por descenso recursivo), `MakeHumanRig` (pesos y articulaciones), `PointCloud` (holograma)
-- `src/exoesqueleto/armor/ArmorPiece.java`: armadura de tubos con skinning
-- `src/exoesqueleto/gui/ExoskeletonApp.java`: visor JavaFX. Tiene también un modo captura (`--snapshot=f.png [--walk=s] [--yaw=grados] [--show=cloud,armor,skeleton] [--points=n]`) y una prueba de rendimiento (`--fpstest=segundos`).
+- `src/exoesqueleto/armor/ArmorPiece.java`: generación de la malla y skinning
+- `src/exoesqueleto/gui/ExoskeletonApp.java`: visor JavaFX (también tiene un modo captura: `--snapshot=fichero.png [--walk=segundos] [--yaw=grados] [--skeleton=1]`)
 - `src/exoesqueleto/bench/BenchmarkFK.java`
-- `modelo/`: el cuerpo exportado de MakeHuman (`cuerpo.obj`) y los pesos de la malla base (`default_weights.mhw`, CC0, de MakeHuman 1.3.0)
 - `lib/`: JavaFX 23.0.2 (jars para Windows de Maven Central)
-
-Para usar otro cuerpo: en MakeHuman, exportar como Wavefront obj en centímetros, sin ropa ni pelo, y guardarlo como `modelo/cuerpo.obj`.
 
 ## Ideas para seguir
 
 - Cinemática inversa: dar la posición de la mano o del pie y calcular los ángulos (CCD o jacobiano). Es el paso natural después de la directa.
-- Animaciones reales a partir de captura de movimiento (ficheros .bvh) en vez de senos.
+- Cargar el esqueleto desde fichero, como en el lab2, o importar una armadura modelada en Blender (.obj).
+- Hacer el skinning en paralelo o en GPU para los niveles de detalle altos.
 - Dinámica real (masas, pares en los motores, interacción con el cuerpo): eso ya no es para JavaFX. Habría que pasar a OpenSim (tiene API Java) o a MuJoCo (Python).
-
-Créditos: modelo y pesos generados con MakeHuman (makehumancommunity.org). Los modelos exportados y `default_weights.mhw` tienen licencia CC0.

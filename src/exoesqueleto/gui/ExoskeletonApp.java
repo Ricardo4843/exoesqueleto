@@ -2,19 +2,15 @@ package exoesqueleto.gui;
 
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 
 import javax.imageio.ImageIO;
 
 import exoesqueleto.armor.ArmorPiece;
-import exoesqueleto.body.MakeHumanRig;
-import exoesqueleto.body.PointCloud;
 import exoesqueleto.kinematics.ForwardKinematics3D;
 import exoesqueleto.kinematics.HumanSkeleton;
 import exoesqueleto.kinematics.Matrix4;
@@ -39,26 +35,17 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Slider;
 import javafx.scene.control.ToggleButton;
-import javafx.scene.effect.Bloom;
 import javafx.scene.image.PixelReader;
 import javafx.scene.image.WritableImage;
-import javafx.scene.layout.Background;
-import javafx.scene.layout.BackgroundFill;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
-import javafx.scene.paint.CycleMethod;
-import javafx.scene.paint.Paint;
 import javafx.scene.paint.PhongMaterial;
-import javafx.scene.paint.RadialGradient;
-import javafx.scene.paint.Stop;
 import javafx.scene.shape.Box;
 import javafx.scene.shape.Cylinder;
 import javafx.scene.shape.MeshView;
 import javafx.scene.shape.Sphere;
-import javafx.scene.text.Font;
-import javafx.scene.text.Text;
 import javafx.scene.transform.Affine;
 import javafx.scene.transform.Rotate;
 import javafx.scene.transform.Translate;
@@ -69,15 +56,6 @@ import javafx.util.Duration;
  * Visor 3D del exoesqueleto (el equivalente a SkeletonVisualizer +
  * SkeletonPanel del lab2, pero con JavaFX en vez de Swing, porque Swing solo
  * dibuja en 2D).
- *
- * Tres formas de ver el cuerpo, que se pueden combinar:
- * <ul>
- * <li>Holograma: nube de puntos sobre el cuerpo de MakeHuman (modelo/).</li>
- * <li>Armadura: las piezas en forma de tubo (ArmorPiece).</li>
- * <li>Esqueleto: los segmentos y nodos, como el dibujo del lab2.</li>
- * </ul>
- * Si no encuentra el modelo de MakeHuman, arranca con un esqueleto genérico y
- * la armadura.
  *
  * <h2>Conceptos básicos de JavaFX</h2>
  * <ul>
@@ -100,53 +78,38 @@ import javafx.util.Duration;
 public class ExoskeletonApp extends Application {
 
 	private static final String[] AXES = { "X", "Y", "Z" };
-	// Rutas relativas a la carpeta del proyecto (desde donde lo lanzan Eclipse y run.ps1)
-	private static final Path BODY_FILE = Path.of("modelo", "cuerpo.obj");
-	private static final Path WEIGHTS_FILE = Path.of("modelo", "default_weights.mhw");
-	private static final Color HOLO = Color.web("#38d6ff"); // cian del holograma
 
 	// ---- Modelo ----
-	private HumanSkeleton skeleton;
-	private Segment root; // árbol de segmentos
-	private List<Segment> segments; // los mismos, en una lista
+	private final Segment root = HumanSkeleton.build(); // árbol de segmentos
+	private final List<Segment> segments = root.flatten(); // los mismos, en una lista
 	private final Map<String, Segment> byName = new HashMap<>(); // búsqueda por nombre
 	private Map<Segment, Matrix4> restInverse; // Frame_reposo^-1 de cada segmento (skinning)
-	private MakeHumanRig rig; // cuerpo de MakeHuman (null si no se ha encontrado)
 
 	// ---- Vista 3D ----
-	private final Group cloudGroup = new Group(); // holograma (nube de puntos)
-	private final Group armorGroup = new Group(); // piezas de armadura
+	private final Group armorGroup = new Group(); // todas las piezas de armadura
 	private final Group skeletonGroup = new Group(); // esferas (nodos) y cilindros (segmentos)
-	private final Group decorGroup = new Group(); // partículas y números del fondo
-	private final List<PointCloud> clouds = new ArrayList<>();
 	private final List<ArmorPiece> pieces = new ArrayList<>();
 	// Affine = transformación general de JavaFX (una matriz 3x4 como Matrix4).
 	// Se guarda una por esfera y cilindro, y cada fotograma se le copia el frame
 	// calculado por la cinemática.
 	private final Map<Segment, Affine> jointTransforms = new IdentityHashMap<>();
 	private final Map<Segment, Affine> boneTransforms = new IdentityHashMap<>();
-	private SubScene sub;
-	private Pane viewport; // contenedor 2D de la SubScene (su fondo es el fondo de la escena)
-	private Box floor;
 
 	// ---- Cámara orbital ----
 	// La cámara cuelga de un "brazo" que gira alrededor del cuerpo:
 	// yaw = giro horizontal, pitch = inclinación arriba/abajo, zoom = distancia.
-	private final Rotate yaw = new Rotate(180, Rotate.Y_AXIS);
-	private final Rotate pitch = new Rotate(-6, Rotate.X_AXIS);
-	private final Translate zoom = new Translate(0, 0, -520);
+	private final Rotate yaw = new Rotate(200, Rotate.Y_AXIS);
+	private final Rotate pitch = new Rotate(-12, Rotate.X_AXIS);
+	private final Translate zoom = new Translate(0, 0, -420);
 	private double dragX, dragY; // última posición del ratón al arrastrar
 
 	// ---- Panel de controles ----
 	private ComboBox<Segment> selector;
 	private final Slider[] axisSliders = new Slider[3];
 	private final Label[] axisLabels = new Label[3];
-	private final Label cloudLabel = new Label();
+	private Slider detailSlider;
 	private final Label vertexLabel = new Label();
 	private final Label statsLabel = new Label();
-	private final CheckBox showCloud = new CheckBox("Holograma (nube de puntos)");
-	private final CheckBox showArmor = new CheckBox("Armadura (tubos)");
-	private final CheckBox showSkeleton = new CheckBox("Esqueleto (segmentos y nodos)");
 	private ToggleButton walkButton;
 
 	// ---- Estado del bucle ----
@@ -161,18 +124,18 @@ public class ExoskeletonApp extends Application {
 	private long lastFrame, fpsWindowStart; // marcas de tiempo en nanosegundos
 	private int fpsFrames;
 	private double fps;
-	private long totalFrames; // fotogramas desde el arranque (para --fpstest)
 
 	/** Punto de entrada de JavaFX: monta toda la escena y arranca el bucle. */
 	@Override
 	public void start(Stage stage) {
-		loadModel();
-		Map<String, String> args = getParameters().getNamed(); // parámetros tipo --points=80000
-		int armorDetail = Integer.parseInt(args.getOrDefault("detail", "40"));
-		int pointCount = Integer.parseInt(args.getOrDefault("points", "60000"));
+		for (Segment s : segments)
+			byName.put(s.getName(), s);
+		restInverse = computeRestInverse();
+		// Parámetros de línea de comandos del tipo --detail=80 (opcional)
+		int detail = Integer.parseInt(getParameters().getNamed().getOrDefault("detail", "56"));
 
 		// Grupo "mundo": aquí van las coordenadas de la cinemática.
-		Group world = new Group(cloudGroup, armorGroup, skeletonGroup);
+		Group world = new Group(armorGroup, skeletonGroup);
 		// La cinemática usa Z hacia arriba (convenio de robótica), pero JavaFX usa
 		// Y hacia ABAJO (convenio de pantallas: el píxel (0,0) está arriba a la
 		// izquierda). Un giro de 90º sobre X convierte uno en otro:
@@ -180,19 +143,16 @@ public class ExoskeletonApp extends Application {
 		// dentro sin tocar el resto del código.
 		world.getTransforms().add(new Rotate(90, Rotate.X_AXIS));
 		buildSkeletonView();
-		buildArmor(armorDetail);
-		buildCloud(pointCount);
-		buildDecor();
+		buildArmor(detail);
 
-		// Suelo: una caja muy fina en y = 0 (solo en modo armadura)
-		floor = new Box(260, 1, 260);
+		// Suelo: una caja muy fina en y = 0
+		Box floor = new Box(260, 1, 260);
 		floor.setTranslateY(0.5);
 		floor.setMaterial(new PhongMaterial(Color.web("#2b2f36")));
 
-		// Iluminación "de tres puntos" simplificada (solo afecta a la armadura y
-		// al esqueleto; el holograma brilla por sí mismo): una luz principal
-		// cálida, una de relleno fría desde el lado contrario y una ambiental
-		// para que las sombras no sean negras del todo.
+		// Iluminación "de tres puntos" simplificada: una luz principal cálida, una
+		// de relleno fría desde el lado contrario y una ambiental para que las
+		// sombras no sean negras del todo.
 		PointLight key = new PointLight(Color.web("#fff6ea"));
 		key.getTransforms().add(new Translate(-250, -350, -300));
 		PointLight fill = new PointLight(Color.web("#6f86a8"));
@@ -208,28 +168,29 @@ public class ExoskeletonApp extends Application {
 		camera.setFarClip(5000);
 		camera.setFieldOfView(35);
 		// Cadena de transformaciones de la cámara (cinemática otra vez): subir al
-		// centro del cuerpo (y = -92, que es "arriba" en JavaFX), girar (yaw),
+		// centro del cuerpo (y = -100, que es "arriba" en JavaFX), girar (yaw),
 		// inclinar (pitch) y alejarse hacia atrás (zoom).
 		Group cameraRig = new Group(camera);
-		cameraRig.getTransforms().addAll(new Translate(0, -92, 0), yaw, pitch);
+		cameraRig.getTransforms().addAll(new Translate(0, -100, 0), yaw, pitch);
 		camera.getTransforms().add(zoom);
 
-		Group scene3d = new Group(world, decorGroup, floor, key, fill, ambient, cameraRig);
+		Group scene3d = new Group(world, floor, key, fill, ambient, cameraRig);
 		// true = usar depth buffer (lo de delante tapa a lo de detrás).
 		// BALANCED = antialiasing, para que los bordes no salgan en escalera.
-		sub = new SubScene(scene3d, 900, 700, true, SceneAntialiasing.BALANCED);
+		SubScene sub = new SubScene(scene3d, 900, 700, true, SceneAntialiasing.BALANCED);
 		sub.setCamera(camera);
+		sub.setFill(Color.web("#14171c"));
 		// La SubScene no se redimensiona sola: se "enlaza" (bind) su tamaño al de
 		// su contenedor. Con bind, cuando cambia uno, el otro se actualiza solo.
-		viewport = new Pane(sub);
+		Pane viewport = new Pane(sub);
 		sub.widthProperty().bind(viewport.widthProperty());
 		sub.heightProperty().bind(viewport.heightProperty());
 		installCameraControls(sub);
 
 		// BorderPane: la vista 3D en el centro y el panel a la izquierda
 		BorderPane layout = new BorderPane(viewport);
-		layout.setLeft(buildControls());
-		Scene scene = new Scene(layout, 1200, 800);
+		layout.setLeft(buildControls(detail));
+		Scene scene = new Scene(layout, 1200, 760);
 		stage.setTitle("Exoesqueleto 3D");
 		stage.setScene(scene);
 		stage.show();
@@ -244,46 +205,9 @@ public class ExoskeletonApp extends Application {
 			}
 		}.start();
 
-		String snapshot = args.get("snapshot");
+		String snapshot = getParameters().getNamed().get("snapshot");
 		if (snapshot != null)
 			takeSnapshotAndExit(scene, snapshot);
-
-		// Prueba de rendimiento (--fpstest=segundos [--nowalk=1]): camina (o se
-		// queda quieto) ese tiempo, imprime los FPS medios y cierra
-		if (args.containsKey("fpstest")) {
-			walkButton.setSelected(!args.containsKey("nowalk"));
-			double seconds = Double.parseDouble(args.get("fpstest"));
-			long startFrames = totalFrames;
-			PauseTransition test = new PauseTransition(Duration.seconds(seconds));
-			test.setOnFinished(e -> {
-				System.out.printf("FPS medio: %.1f | %s | %s%n", (totalFrames - startFrames) / seconds,
-						statsLabel.getText().replace('\n', ' '), cloudLabel.getText());
-				Platform.exit();
-			});
-			test.play();
-		}
-	}
-
-	/**
-	 * Intenta cargar el cuerpo de MakeHuman y construir el esqueleto con sus
-	 * articulaciones. Si falta algún fichero, usa el esqueleto genérico.
-	 */
-	private void loadModel() {
-		Map<String, double[]> joints;
-		try {
-			rig = MakeHumanRig.load(BODY_FILE, WEIGHTS_FILE);
-			joints = rig.getJoints();
-		} catch (Exception e) {
-			System.out.println("Sin modelo de MakeHuman (" + e.getMessage() + "): esqueleto genérico");
-			rig = null;
-			joints = HumanSkeleton.defaultJoints();
-		}
-		skeleton = HumanSkeleton.fromJoints(joints);
-		root = skeleton.getRoot();
-		segments = root.flatten();
-		for (Segment s : segments)
-			byName.put(s.getName(), s);
-		restInverse = computeRestInverse();
 	}
 
 	// ================================================================ postura
@@ -292,7 +216,7 @@ public class ExoskeletonApp extends Application {
 	 * Bucle principal, una vez por fotograma:
 	 * 1. Si está caminando, avanza la animación.
 	 * 2. Si la postura ha cambiado: cinemática directa -> matrices de skinning
-	 *    -> holograma y armadura -> esqueleto.
+	 *    -> armadura -> esqueleto.
 	 * Mide el tiempo de cada fase con System.nanoTime(), como en el lab2.
 	 */
 	private void frame(long now) {
@@ -307,7 +231,6 @@ public class ExoskeletonApp extends Application {
 		lastFrame = now;
 
 		// Fotogramas por segundo, medidos en ventanas de medio segundo
-		totalFrames++;
 		fpsFrames++;
 		if (now - fpsWindowStart > 500_000_000L) {
 			fps = fpsFrames * 1e9 / (now - fpsWindowStart);
@@ -320,8 +243,7 @@ public class ExoskeletonApp extends Application {
 
 		// 1) Cinemática directa (el algoritmo del lab2, en 3D)
 		long t0 = System.nanoTime();
-		double[] o = skeleton.getOrigin();
-		Node3D tree = ForwardKinematics3D.computePositions(root, o[0], o[1], o[2]);
+		Node3D tree = ForwardKinematics3D.computePositions(root, 0, 0, HumanSkeleton.PELVIS_HEIGHT);
 		Map<Segment, Matrix4> frames = ForwardKinematics3D.frames(tree);
 		long t1 = System.nanoTime();
 
@@ -329,16 +251,7 @@ public class ExoskeletonApp extends Application {
 		Map<Segment, double[]> skin = new IdentityHashMap<>();
 		for (Segment s : segments)
 			skin.put(s, frames.get(s).multiply(restInverse.get(s)).toArray());
-		// 3) Mover los puntos del holograma y los vértices de la armadura (solo
-		//    lo que se está viendo). La nube usa un array en el orden de
-		//    MakeHumanRig.SEGMENTS, más rápido de consultar que un mapa.
-		if (cloudGroup.isVisible() && rig != null) {
-			double[][] skinArray = new double[MakeHumanRig.SEGMENTS.length][];
-			for (int i = 0; i < skinArray.length; i++)
-				skinArray[i] = skin.get(byName.get(MakeHumanRig.SEGMENTS[i]));
-			for (PointCloud c : clouds)
-				c.update(skinArray);
-		}
+		// 3) Mover los vértices de la armadura (solo si se está viendo)
 		if (armorGroup.isVisible())
 			for (ArmorPiece p : pieces)
 				p.update(skin);
@@ -356,7 +269,7 @@ public class ExoskeletonApp extends Application {
 				setAffine(bone, f.multiply(Matrix4.translation(0, 0, s.getLength() / 2))
 						.multiply(Matrix4.rotX(Math.PI / 2)));
 		}
-		statsLabel.setText(String.format("Cinemática directa: %.1f µs%nSkinning: %.2f ms%nFPS: %.0f",
+		statsLabel.setText(String.format("Cinemática directa: %.1f µs%nSkinning armadura: %.2f ms%nFPS: %.0f",
 				(t1 - t0) / 1e3, (t2 - t1) / 1e6, fps));
 	}
 
@@ -367,13 +280,11 @@ public class ExoskeletonApp extends Application {
 	 *
 	 * p es la fase del ciclo (0,9 pasos por segundo). Las dos piernas van
 	 * desfasadas medio ciclo (signos opuestos), y cada brazo va en oposición a
-	 * la pierna de su lado, como al caminar de verdad. Los brazos además se
-	 * bajan desde la pose en "A" hasta casi pegarlos al cuerpo.
+	 * la pierna de su lado, como al caminar de verdad.
 	 */
 	private void applyWalk(double t) {
 		double p = 2 * Math.PI * 0.9 * t;
 		double sin = Math.sin(p), cos = Math.cos(p);
-		double armDown = skeleton.getArmRestAngle() - 8; // grados para bajar el brazo
 		set("Muslo D", 0, 25 * sin); // cadera: +-25º adelante/atrás
 		set("Muslo I", 0, -25 * sin);
 		// Rodilla: se dobla sobre todo cuando la pierna pasa por delante (fase de
@@ -384,10 +295,8 @@ public class ExoskeletonApp extends Application {
 		set("Pie I", 0, -10 * sin);
 		set("Brazo D", 0, -22 * sin); // brazos en oposición a las piernas
 		set("Brazo I", 0, 22 * sin);
-		set("Brazo D", 1, -armDown); // abducción: el derecho baja con ángulo negativo
-		set("Brazo I", 1, armDown); // y el izquierdo con positivo (espejo)
-		set("Antebrazo D", 0, 15 + 15 * Math.max(0, -sin)); // codos algo doblados
-		set("Antebrazo I", 0, 15 + 15 * Math.max(0, sin));
+		set("Antebrazo D", 0, 20 + 15 * Math.max(0, -sin)); // codos algo doblados
+		set("Antebrazo I", 0, 20 + 15 * Math.max(0, sin));
 		set("Tórax", 2, -6 * sin); // los hombros giran al contrario que la pelvis
 		set("Pelvis", 2, 4 * sin);
 	}
@@ -408,9 +317,8 @@ public class ExoskeletonApp extends Application {
 			saved.put(s, new double[] { s.getAngle(0), s.getAngle(1), s.getAngle(2) });
 			s.resetAngles();
 		}
-		double[] o = skeleton.getOrigin();
 		Map<Segment, Matrix4> rest = ForwardKinematics3D
-				.frames(ForwardKinematics3D.computePositions(root, o[0], o[1], o[2]));
+				.frames(ForwardKinematics3D.computePositions(root, 0, 0, HumanSkeleton.PELVIS_HEIGHT));
 		Map<Segment, Matrix4> inverse = new IdentityHashMap<>();
 		for (Segment s : segments) {
 			inverse.put(s, rest.get(s).rigidInverse());
@@ -423,76 +331,8 @@ public class ExoskeletonApp extends Application {
 	// ================================================================ vista 3D
 
 	/**
-	 * (Re)genera el holograma con el número de puntos dado. Son dos nubes: una
-	 * grande de puntos pequeños y otra con un 8% de puntos más gruesos y
-	 * blancos, que dan el efecto de "chispas" de la imagen de referencia.
-	 */
-	private void buildCloud(int count) {
-		clouds.clear();
-		cloudGroup.getChildren().clear();
-		if (rig == null) {
-			cloudLabel.setText("Sin modelo de MakeHuman en modelo/");
-			return;
-		}
-		PointCloud base = new PointCloud(rig, count, 0.22, 1, glowing(HOLO));
-		PointCloud sparks = new PointCloud(rig, count / 12, 0.42, 2, glowing(Color.web("#d8f6ff")));
-		clouds.add(base);
-		clouds.add(sparks);
-		cloudGroup.getChildren().addAll(base.getNode(), sparks.getNode());
-		cloudLabel.setText(String.format("%,d puntos en %d mallas", count + count / 12,
-				base.getBucketCount() + sparks.getBucketCount()));
-		dirty = true;
-	}
-
-	/**
-	 * Material que BRILLA POR SÍ MISMO: color difuso negro (no le afecta la
-	 * iluminación) más un "mapa de autoiluminación" de un solo píxel del color
-	 * deseado. Así el punto se ve siempre de ese color, como una luz.
-	 */
-	private static PhongMaterial glowing(Color color) {
-		WritableImage pixel = new WritableImage(1, 1);
-		pixel.getPixelWriter().setColor(0, 0, color);
-		PhongMaterial m = new PhongMaterial(Color.BLACK);
-		m.setSpecularColor(Color.BLACK);
-		m.setSelfIlluminationMap(pixel);
-		return m;
-	}
-
-	/**
-	 * Decorado del fondo: partículas flotando y "0" y "1" sueltos, como en la
-	 * imagen de referencia. Con semilla fija para que siempre salga igual.
-	 */
-	private void buildDecor() {
-		Random rnd = new Random(3);
-		PhongMaterial dot = new PhongMaterial(Color.BLACK);
-		WritableImage px = new WritableImage(1, 1);
-		px.getPixelWriter().setColor(0, 0, Color.web("#2a8cff"));
-		dot.setSelfIlluminationMap(px);
-		for (int i = 0; i < 70; i++) {
-			Sphere s = new Sphere(0.6 + rnd.nextDouble() * 1.4);
-			s.setMaterial(dot);
-			// Coordenadas de JavaFX (y hacia abajo): repartidas por detrás y a los
-			// lados del cuerpo
-			s.getTransforms().add(new Translate(rnd.nextGaussian() * 160, -rnd.nextDouble() * 230,
-					60 + rnd.nextDouble() * 300));
-			decorGroup.getChildren().add(s);
-		}
-		String[] bits = { "0", "1", "01", "10", "11", "00" };
-		for (int i = 0; i < 45; i++) {
-			Text t = new Text(bits[rnd.nextInt(bits.length)]);
-			t.setFont(Font.font("Consolas", 7 + rnd.nextDouble() * 7));
-			t.setFill(Color.web("#3aa8ff", 0.25 + rnd.nextDouble() * 0.35));
-			// El texto es un nodo 2D, pero dentro de una SubScene 3D se puede
-			// colocar a cualquier profundidad. Se gira 180º para que se lea bien
-			// desde la cámara, que mira hacia el cuerpo desde delante.
-			t.getTransforms().addAll(new Translate(rnd.nextGaussian() * 170, -rnd.nextDouble() * 220,
-					80 + rnd.nextDouble() * 260), new Rotate(180, Rotate.Y_AXIS));
-			decorGroup.getChildren().add(t);
-		}
-	}
-
-	/**
-	 * (Re)genera todas las piezas de armadura con la resolución dada.
+	 * (Re)genera todas las piezas de armadura con la resolución dada. Se llama
+	 * al arrancar y cada vez que se mueve el slider de detalle.
 	 *
 	 * @param sides Vértices por anillo (y número de anillos): sides² por pieza.
 	 */
@@ -535,6 +375,7 @@ public class ExoskeletonApp extends Application {
 	/**
 	 * Crea la vista del esqueleto "desnudo", como el dibujo del lab2 pero en 3D:
 	 * una esfera en cada articulación (los nodos) y un cilindro por segmento.
+	 * Empieza oculta (se activa con la casilla "Esqueleto").
 	 */
 	private void buildSkeletonView() {
 		PhongMaterial jointMat = new PhongMaterial(Color.web("#e8553f"));
@@ -555,6 +396,7 @@ public class ExoskeletonApp extends Application {
 				skeletonGroup.getChildren().add(bone);
 			}
 		}
+		skeletonGroup.setVisible(false);
 	}
 
 	/** Material metálico: color difuso dado y reflejo especular blanco azulado. */
@@ -569,37 +411,6 @@ public class ExoskeletonApp extends Application {
 	private static void setAffine(Affine a, Matrix4 f) {
 		double[] m = f.toArray();
 		a.setToTransform(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11]);
-	}
-
-	/**
-	 * Aplica el aspecto según lo que esté activado. Con el holograma: fondo
-	 * azul con degradado radial, decorado y efecto Bloom (resplandor). Sin él:
-	 * fondo gris oscuro y suelo.
-	 *
-	 * Bloom es un efecto 2D que JavaFX aplica a la imagen ya dibujada de la
-	 * SubScene: busca los píxeles más brillantes que un umbral y los difumina
-	 * alrededor, como la luz de un neón. Es lo que hace "brillar" los puntos.
-	 */
-	private void updateLook() {
-		boolean holo = showCloud.isSelected() && rig != null;
-		cloudGroup.setVisible(showCloud.isSelected());
-		armorGroup.setVisible(showArmor.isSelected());
-		skeletonGroup.setVisible(showSkeleton.isSelected());
-		decorGroup.setVisible(holo);
-		floor.setVisible(!holo);
-		// El fondo se pinta en el Pane que hay DETRÁS de la SubScene (que se deja
-		// transparente) y no en la propia SubScene: si no, el efecto Bloom, que
-		// trabaja sobre la imagen de la SubScene, también lo procesaría y lo
-		// pintaría mal.
-		sub.setFill(Color.TRANSPARENT);
-		Paint background = holo
-				// Degradado radial: azul en el centro que se oscurece hacia los bordes
-				? new RadialGradient(0, 0, 0.5, 0.45, 0.75, true, CycleMethod.NO_CYCLE,
-						new Stop(0, Color.web("#0b3f8a")), new Stop(1, Color.web("#020b1f")))
-				: Color.web("#14171c");
-		viewport.setBackground(new Background(new BackgroundFill(background, null, null)));
-		sub.setEffect(holo ? new Bloom(0.35) : null);
-		dirty = true; // lo que se vuelve a mostrar tiene que ponerse en la postura actual
 	}
 
 	/**
@@ -626,7 +437,7 @@ public class ExoskeletonApp extends Application {
 	// ================================================================ panel
 
 	/** Construye el panel de la izquierda con todos los controles. */
-	private VBox buildControls() {
+	private VBox buildControls(int detail) {
 		Label title = new Label("Exoesqueleto 3D");
 		title.setStyle("-fx-font-size: 18; -fx-font-weight: bold;"); // CSS de JavaFX
 
@@ -638,8 +449,8 @@ public class ExoskeletonApp extends Application {
 		selector.setMaxWidth(Double.MAX_VALUE);
 		selector.setOnAction(e -> refreshSliders());
 
-		// VBox: coloca sus hijos en columna, con 7 px de separación
-		VBox box = new VBox(7, title, new Label("Articulación"), selector);
+		// VBox: coloca sus hijos en columna, con 8 px de separación
+		VBox box = new VBox(8, title, new Label("Articulación"), selector);
 
 		// Un slider por eje (X, Y, Z)
 		for (int i = 0; i < 3; i++) {
@@ -678,42 +489,33 @@ public class ExoskeletonApp extends Application {
 				refreshSliders();
 		});
 
-		// Qué se ve. Por defecto el holograma si hay modelo, y si no, la armadura.
-		showCloud.setSelected(rig != null);
-		showArmor.setSelected(rig == null);
-		showCloud.setDisable(rig == null);
-		for (CheckBox c : new CheckBox[] { showCloud, showArmor, showSkeleton })
-			c.selectedProperty().addListener((obs, old, on) -> updateLook());
-
-		// Slider de puntos del holograma: de 10.000 a 300.000
-		Slider pointSlider = new Slider(10_000, 300_000, clouds.isEmpty() ? 60_000 : clouds.get(0).getCount());
-		pointSlider.setDisable(rig == null);
-		// Solo se regenera al SOLTAR el slider (valueChanging pasa a false): si se
-		// regenerase mientras se arrastra, se crearían cientos de nubes para nada
-		pointSlider.valueChangingProperty().addListener((obs, was, changing) -> {
-			if (!changing)
-				buildCloud((int) pointSlider.getValue());
+		CheckBox showArmor = new CheckBox("Armadura");
+		showArmor.setSelected(true);
+		showArmor.selectedProperty().addListener((obs, old, on) -> {
+			armorGroup.setVisible(on);
+			dirty = true; // al volver a mostrarla hay que ponerla en la postura actual
 		});
+		CheckBox showSkeleton = new CheckBox("Esqueleto (segmentos y nodos)");
+		showSkeleton.selectedProperty().addListener((obs, old, on) -> skeletonGroup.setVisible(on));
 
-		// Slider de detalle de la armadura: de 8 a 160 vértices por anillo
-		Slider detailSlider = new Slider(8, 160, 40);
+		// Slider de detalle: de 8 a 160 vértices por anillo, en saltos de 8
+		detailSlider = new Slider(8, 160, detail);
 		detailSlider.setMajorTickUnit(8);
 		detailSlider.setSnapToTicks(true);
+		// Solo se regenera al SOLTAR el slider (valueChanging pasa a false): si se
+		// regenerase mientras se arrastra, se crearían cientos de mallas para nada
 		detailSlider.valueChangingProperty().addListener((obs, was, changing) -> {
 			if (!changing)
 				buildArmor((int) detailSlider.getValue());
 		});
 
-		box.getChildren().addAll(new Separator(), reset, walkButton, new Separator(),
-				showCloud, showArmor, showSkeleton, new Separator(),
-				new Label("Puntos del holograma"), pointSlider, cloudLabel,
+		box.getChildren().addAll(new Separator(), reset, walkButton, showArmor, showSkeleton, new Separator(),
 				new Label("Detalle de la armadura"), detailSlider, vertexLabel, new Separator(), statsLabel);
 		box.setPadding(new Insets(14));
 		box.setPrefWidth(270);
 
 		selector.getSelectionModel().select(byName.get("Brazo D"));
 		refreshSliders();
-		updateLook();
 		return box;
 	}
 
@@ -749,28 +551,27 @@ public class ExoskeletonApp extends Application {
 
 	/**
 	 * Modo captura, para generar imágenes sin tocar el ratón:
-	 * --snapshot=fichero.png [--walk=segundos] [--yaw=grados]
-	 * [--show=cloud,armor,skeleton] [--points=n]. Espera 2 s a que se dibuje la
-	 * escena, la guarda en PNG y cierra.
+	 * --snapshot=fichero.png [--walk=segundos] [--yaw=grados] [--skeleton=1].
+	 * Espera 1,5 s a que se dibuje la escena, la guarda en PNG y cierra.
 	 */
 	private void takeSnapshotAndExit(Scene scene, String file) {
-		Map<String, String> args = getParameters().getNamed();
-		if (args.containsKey("walk")) {
-			applyWalk(Double.parseDouble(args.get("walk")));
+		String walk = getParameters().getNamed().get("walk");
+		if (walk != null) {
+			applyWalk(Double.parseDouble(walk));
 			refreshSliders();
 			dirty = true;
 		}
-		if (args.containsKey("yaw"))
-			yaw.setAngle(Double.parseDouble(args.get("yaw")));
-		if (args.containsKey("show")) {
-			String show = args.get("show");
-			showCloud.setSelected(show.contains("cloud"));
-			showArmor.setSelected(show.contains("armor"));
-			showSkeleton.setSelected(show.contains("skeleton"));
+		String yawArg = getParameters().getNamed().get("yaw");
+		if (yawArg != null)
+			yaw.setAngle(Double.parseDouble(yawArg));
+		String skel = getParameters().getNamed().get("skeleton");
+		if (skel != null) {
+			skeletonGroup.setVisible(true);
+			armorGroup.setVisible(false);
 		}
 		// PauseTransition: ejecuta algo pasado un tiempo, sin bloquear el hilo de
 		// JavaFX (un Thread.sleep congelaría la ventana y no se dibujaría nada)
-		PauseTransition wait = new PauseTransition(Duration.seconds(2));
+		PauseTransition wait = new PauseTransition(Duration.seconds(1.5));
 		wait.setOnFinished(e -> {
 			WritableImage img = scene.snapshot(null);
 			// Se pasa la imagen de JavaFX a una de AWT (BufferedImage) píxel a
@@ -783,7 +584,7 @@ public class ExoskeletonApp extends Application {
 					out.setRGB(x, y, pr.getArgb(x, y));
 			try {
 				ImageIO.write(out, "png", new File(file));
-				System.out.println(statsLabel.getText().replace('\n', ' ') + " | " + cloudLabel.getText());
+				System.out.println(statsLabel.getText().replace('\n', ' ') + " | " + vertexLabel.getText());
 			} catch (Exception ex) {
 				ex.printStackTrace();
 			}

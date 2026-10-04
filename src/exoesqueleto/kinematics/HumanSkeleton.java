@@ -4,35 +4,14 @@ package exoesqueleto.kinematics;
 import static exoesqueleto.kinematics.Segment.Shape.ELLIPSOID;
 import static exoesqueleto.kinematics.Segment.Shape.TUBE;
 
-import java.util.HashMap;
-import java.util.IdentityHashMap;
-import java.util.Map;
-
 /**
- * Esqueleto humano de cuerpo completo (21 segmentos) con límites articulares
- * aproximados. Sustituye al fichero de texto que se leía en el lab2.
- *
- * <h2>Se construye a partir de las ARTICULACIONES</h2>
- * En vez de escribir a mano la longitud y la orientación de cada segmento, se
- * da la posición 3D de cada articulación en la postura de reposo (hombro,
- * codo, muñeca...) y el código deduce:
- * <ul>
- * <li>Longitud de cada segmento = distancia entre sus dos articulaciones.</li>
- * <li>Rotación base = la que hace que su eje Z apunte de una articulación a
- * la siguiente.</li>
- * </ul>
- * Así el mismo código sirve para dos casos:
- * <ul>
- * <li>{@link #defaultJoints()}: un cuerpo genérico de 1,75 m con los brazos
- * pegados al cuerpo (lo que se usa si no hay modelo 3D).</li>
- * <li>Articulaciones detectadas en el modelo de MakeHuman (MakeHumanRig): el
- * esqueleto encaja exactamente dentro de ese cuerpo, sea cual sea su altura o
- * complexión, y con su postura de reposo (brazos en "A").</li>
- * </ul>
+ * Construye el esqueleto humano de cuerpo completo (~1,75 m, 21 segmentos)
+ * con límites articulares aproximados. Sustituye al fichero de texto que se
+ * leía en el lab2.
  *
  * <h2>Ejes del mundo</h2>
  * X = lateral (hacia la derecha del sujeto), Y = hacia delante, Z = arriba.
- * El suelo es z = 0.
+ * El suelo es z = 0 y la raíz (pelvis) está a 95 cm de altura.
  *
  * <h2>Árbol</h2>
  *
@@ -48,250 +27,132 @@ import java.util.Map;
  * Es un árbol (y no una simple cadena como un brazo robótico) porque el
  * cuerpo se ramifica: de la pelvis salen el tronco y las dos piernas, y del
  * tórax salen el cuello y los dos brazos.
+ *
+ * <h2>Truco para que los dos lados sean simétricos</h2>
+ * Todos los segmentos de piernas y brazos acaban, en reposo, con la misma
+ * orientación: rotX(180º), es decir, Z local hacia abajo y X local hacia la
+ * derecha. Así, en los dos lados, el eje X es siempre flexión (positivo =
+ * hacia delante) y el Y es la abducción (separar del cuerpo).
+ *
+ * Para conseguirlo, la cadera y la clavícula giran rotY(±90º) para apuntar
+ * hacia el lado, y el muslo y el brazo deshacen ese giro con rotY(∓90º) antes
+ * de girar 180º hacia abajo. Como cadera * muslo = rotY(90) * rotY(-90) *
+ * rotX(180) = rotX(180), el resultado es igual en los dos lados.
  */
 public class HumanSkeleton {
 
-	private final Segment root;
-	private final double[] origin; // posición de la pelvis (articulación raíz)
-	// Ángulo (grados) que separa cada brazo de la vertical en reposo. En la pose
-	// en "A" de MakeHuman son unos 45º; la animación de caminar lo usa para
-	// bajar los brazos.
-	private final double armRestAngle;
+	/** Altura de la pelvis sobre el suelo (cm). Es el origen de la cinemática. */
+	public static final double PELVIS_HEIGHT = 95;
 
-	private HumanSkeleton(Segment root, double[] origin, double armRestAngle) {
-		this.root = root;
-		this.origin = origin;
-		this.armRestAngle = armRestAngle;
-	}
-
-	public Segment getRoot() {
-		return root;
-	}
-
-	/** Origen para la cinemática directa: dónde está la pelvis en el mundo. */
-	public double[] getOrigin() {
-		return origin.clone();
-	}
-
-	public double getArmRestAngle() {
-		return armRestAngle;
-	}
+	// Constantes de 90º y 180º en radianes, para no escribir Math.PI / 2 cada vez
+	private static final double D90 = Math.PI / 2, D180 = Math.PI;
 
 	/**
-	 * Articulaciones de un cuerpo genérico de ~1,75 m, de pie y con los brazos
-	 * rectos hacia abajo. Los nombres terminados en _D/_I son derecho/izquierdo.
+	 * Crea el esqueleto y devuelve su raíz (la pelvis). Todos los ángulos de
+	 * .joint(...) van en grados: (eje, nombre, mínimo, máximo).
 	 */
-	public static Map<String, double[]> defaultJoints() {
-		Map<String, double[]> j = new HashMap<>();
-		j.put("pelvis", new double[] { 0, 0, 95 });
-		j.put("lumbar_end", new double[] { 0, 0, 115 });
-		j.put("neck_base", new double[] { 0, 0, 143 });
-		j.put("head_base", new double[] { 0, 0, 153 });
-		j.put("head_top", new double[] { 0, 0, 176 });
-		for (int side : new int[] { 1, -1 }) {
-			String s = side == 1 ? "_D" : "_I";
-			// side = +1 a la derecha (x positiva) y -1 a la izquierda
-			j.put("shoulder" + s, new double[] { side * 21, 0, 143 });
-			j.put("elbow" + s, new double[] { side * 21, 0, 113 });
-			j.put("wrist" + s, new double[] { side * 21, 0, 86 });
-			j.put("hand_end" + s, new double[] { side * 21, 0, 68 });
-			j.put("hip" + s, new double[] { side * 9, 0, 95 });
-			j.put("knee" + s, new double[] { side * 9, 0, 50 });
-			j.put("ankle" + s, new double[] { side * 9, 0, 7 });
-			j.put("foot_end" + s, new double[] { side * 9, 20, 7 });
-		}
-		return j;
-	}
-
-	/**
-	 * Construye el esqueleto a partir de las posiciones de las articulaciones.
-	 * Cada línea dice: segmento, padre, articulación donde empieza y
-	 * articulación donde acaba. Después vienen sus ejes libres (.joint) y su
-	 * pieza de armadura (.armor), ambos con el patrón fluent de Segment.
-	 * Ángulos en grados: (eje, nombre, mínimo, máximo).
-	 */
-	public static HumanSkeleton fromJoints(Map<String, double[]> joints) {
-		Builder b = new Builder(joints);
-
+	public static Segment build() {
 		// ---------------- Tronco ----------------
-		// Raíz: longitud 0 (empieza y acaba en la pelvis). Es el punto de unión
-		// del tronco y las piernas. Su eje Z (Giro) rota todo el cuerpo.
-		Segment pelvis = b.add(null, "Pelvis", "pelvis", "pelvis", false)
+		// Raíz: longitud 0, sirve de punto de unión del tronco y las piernas. Su
+		// eje Z (Giro) permite rotar todo el cuerpo de -180º a 180º.
+		Segment pelvis = new Segment("Pelvis", 0)
 				.joint(0, "Inclinación", -30, 30)
 				.joint(1, "Lateral", -30, 30)
 				.joint(2, "Giro", -180, 180);
+
+		// Sin rotación base: sigue hacia arriba (+Z), como la pelvis.
 		// armorStart(-12): la armadura empieza 12 cm por debajo, para tapar la
-		// pelvis (que no tiene pieza propia)
-		Segment lumbar = b.add(pelvis, "Lumbar", "pelvis", "lumbar_end", false)
+		// pelvis (que no tiene pieza propia).
+		Segment lumbar = new Segment("Lumbar", 20)
 				.joint(0, "Flexión", -20, 45)
 				.joint(1, "Lateral", -25, 25)
 				.joint(2, "Giro", -30, 30)
 				.armor(TUBE, 15, 10, 14, 9.5).armorStart(-12);
-		Segment chest = b.add(lumbar, "Tórax", "lumbar_end", "neck_base", false)
+		// Más ancho arriba (17 cm) que abajo (14,5 cm): forma de tórax
+		Segment chest = new Segment("Tórax", 28)
 				.joint(0, "Flexión", -15, 30)
 				.joint(1, "Lateral", -15, 15)
 				.joint(2, "Giro", -30, 30)
 				.armor(TUBE, 14.5, 10, 17, 11);
-		Segment neck = b.add(chest, "Cuello", "neck_base", "head_base", false)
+		Segment neck = new Segment("Cuello", 10)
 				.joint(0, "Flexión", -40, 50)
 				.joint(1, "Lateral", -35, 35)
 				.joint(2, "Giro", -70, 70)
 				.armor(TUBE, 5.5, 5.5, 5, 5);
-		// Sin .joint(1, ...): la cabeza no tiene inclinación lateral propia (eje
-		// Y bloqueado; esa inclinación la hace el cuello)
-		b.add(neck, "Cabeza", "head_base", "head_top", false)
+		// Sin .joint(1, ...): la cabeza no tiene inclinación lateral propia (eje Y
+		// bloqueado; esa inclinación la hace el cuello)
+		Segment head = new Segment("Cabeza", 23)
 				.joint(0, "Flexión", -20, 20)
 				.joint(2, "Giro", -20, 20)
 				.armor(ELLIPSOID, 9, 10.5, 9, 10.5);
+		pelvis.addChild(lumbar);
+		lumbar.addChild(chest);
+		chest.addChild(neck);
+		neck.addChild(head);
 
 		// ---------------- Extremidades ----------------
-		// Un bucle para los dos lados: side = 1 (derecho) y -1 (izquierdo). Los
-		// límites de abducción se reflejan como en un espejo: en los dos lados
-		// el ángulo positivo es "hacia la derecha", así que separar la pierna
-		// derecha es positivo y separar la izquierda es negativo.
+		// Se construyen en un bucle para los dos lados: side = 1 (derecho) y
+		// side = -1 (izquierdo). Multiplicar los ángulos por "side" refleja el
+		// lado izquierdo como en un espejo, sin duplicar código.
 		for (int side : new int[] { 1, -1 }) {
-			String n = side == 1 ? " D" : " I"; // sufijo del nombre del segmento
-			String j = side == 1 ? "_D" : "_I"; // sufijo del nombre de la articulación
-			boolean right = side == 1;
+			String s = side == 1 ? " D" : " I"; // sufijo del nombre: Derecho / Izquierdo
 
 			// --- Pierna ---
-			// Cadera: segmento "de unión" de la pelvis a la articulación de la
-			// cadera. Sin armadura ni ejes libres (los movimientos de cadera los
-			// hace el muslo). true = segmento lateral (ver Builder.add).
-			Segment hip = b.add(pelvis, "Cadera" + n, "pelvis", "hip" + j, true);
-			Segment thigh = b.add(hip, "Muslo" + n, "hip" + j, "knee" + j, false)
+			// Cadera: segmento "de unión" que va de la pelvis hacia el lado. Sin
+			// armadura ni ejes libres (los movimientos de cadera están en el muslo).
+			Segment hip = new Segment("Cadera" + s, 9, Matrix4.rotY(side * D90));
+			// Muslo: deshace el giro lateral y apunta hacia abajo (ver javadoc).
+			// La abducción tiene límites asimétricos: separar la pierna hacia
+			// fuera llega a 45º, pero cruzarla hacia dentro solo a 20º. Como en
+			// los dos lados positivo = hacia la derecha, los límites se invierten.
+			Segment thigh = new Segment("Muslo" + s, 45,
+					Matrix4.rotY(-side * D90).multiply(Matrix4.rotX(D180)))
 					.joint(0, "Flexión", -30, 120)
-					.joint(1, "Abducción", right ? -20 : -45, right ? 45 : 20)
+					.joint(1, "Abducción", side == 1 ? -20 : -45, side == 1 ? 45 : 20)
 					.joint(2, "Rotación", -40, 40)
 					.armor(TUBE, 9, 9.5, 6.5, 6.5);
-			// La rodilla es una bisagra: solo el eje X, y solo hacia atrás (negativo)
-			Segment shin = b.add(thigh, "Tibia" + n, "knee" + j, "ankle" + j, false)
+			// Tibia: continúa al muslo (sin base). La rodilla es una bisagra: solo
+			// tiene libre el eje X, y solo hacia valores negativos (hacia atrás).
+			Segment shin = new Segment("Tibia" + s, 43)
 					.joint(0, "Flexión", -140, 0)
 					.armor(TUBE, 6.5, 6.5, 4.5, 4.5);
-			b.add(shin, "Pie" + n, "ankle" + j, "foot_end" + j, false)
+			// Pie: rotX(90º) lo gira de "hacia abajo" a "hacia delante".
+			Segment foot = new Segment("Pie" + s, 20, Matrix4.rotX(D90))
 					.joint(0, "Flexión", -30, 45)
 					.joint(1, "Inversión", -20, 20)
 					.armor(ELLIPSOID, 5, 4, 5, 4);
+			pelvis.addChild(hip);
+			hip.addChild(thigh);
+			thigh.addChild(shin);
+			shin.addChild(foot);
 
-			// --- Brazo ---
-			Segment clavicle = b.add(chest, "Clavícula" + n, "neck_base", "shoulder" + j, true)
+			// --- Brazo (misma lógica que la pierna) ---
+			Segment clavicle = new Segment("Clavícula" + s, 21, Matrix4.rotY(side * D90))
 					.joint(0, "Elevación", -10, 30);
-			// El hombro es la articulación con más rango del cuerpo. La abducción
-			// permite bajar el brazo 60º desde la pose en "A" hasta pegarlo al cuerpo.
-			Segment arm = b.add(clavicle, "Brazo" + n, "shoulder" + j, "elbow" + j, false)
+			// El hombro es la articulación con más rango del cuerpo: los 3 ejes
+			// libres y flexión hasta 180º (brazo apuntando al techo).
+			Segment arm = new Segment("Brazo" + s, 30,
+					Matrix4.rotY(-side * D90).multiply(Matrix4.rotX(D180)))
 					.joint(0, "Flexión", -60, 180)
-					.joint(1, "Abducción", right ? -60 : -150, right ? 150 : 60)
+					.joint(1, "Abducción", side == 1 ? -20 : -170, side == 1 ? 170 : 20)
 					.joint(2, "Rotación", -90, 90)
 					.armor(TUBE, 6.5, 6.5, 5, 5);
-			// Codo: flexión (X) y pronación/supinación del antebrazo (Z, girar la
-			// muñeca alrededor del propio antebrazo)
-			Segment forearm = b.add(arm, "Antebrazo" + n, "elbow" + j, "wrist" + j, false)
-					.joint(0, "Flexión", -10, 145)
+			// Codo: flexión (X) y pronación/supinación del antebrazo (Z, girar
+			// la muñeca alrededor del propio antebrazo).
+			Segment forearm = new Segment("Antebrazo" + s, 27)
+					.joint(0, "Flexión", 0, 145)
 					.joint(2, "Pronación", -80, 80)
 					.armor(TUBE, 5, 5, 3.8, 3.5);
-			b.add(forearm, "Mano" + n, "wrist" + j, "hand_end" + j, false)
+			// Mano: elipsoide plano (2,2 cm de grosor x 4,5 cm de ancho)
+			Segment hand = new Segment("Mano" + s, 18)
 					.joint(0, "Flexión", -70, 80)
-					.joint(1, "Desviación", -30, 30)
+					.joint(1, "Desviación", -20, 30)
 					.armor(ELLIPSOID, 2.2, 4.5, 2.2, 4.5);
+			chest.addChild(clavicle);
+			clavicle.addChild(arm);
+			arm.addChild(forearm);
+			forearm.addChild(hand);
 		}
-
-		// Ángulo del brazo derecho con la vertical: arcocoseno de la componente
-		// vertical de su dirección (producto escalar con el vector "abajo")
-		double[] d = Builder.normalize(Builder.sub(joints.get("elbow_D"), joints.get("shoulder_D")));
-		double armAngle = Math.toDegrees(Math.acos(-d[2]));
-		return new HumanSkeleton(pelvis, joints.get("pelvis"), armAngle);
-	}
-
-	/**
-	 * Clase auxiliar que crea cada segmento a partir de dos articulaciones.
-	 * "static" = no necesita una instancia de HumanSkeleton; "private" = solo
-	 * se usa aquí dentro.
-	 */
-	private static final class Builder {
-		private final Map<String, double[]> joints;
-		// Rotación de reposo de cada segmento en coordenadas del MUNDO. Hace falta
-		// para calcular la rotación base de sus hijos (que es relativa al padre).
-		private final Map<Segment, Matrix4> worldRotation = new IdentityHashMap<>();
-
-		Builder(Map<String, double[]> joints) {
-			this.joints = joints;
-		}
-
-		/**
-		 * Crea un segmento que va de la articulación "from" a la "to".
-		 *
-		 * Pasos:
-		 * 1. Dirección d = to - from; longitud = |d|.
-		 * 2. Ejes del segmento en el mundo: Z = d normalizado (hacia dónde apunta).
-		 *    X = el eje lateral del mundo, "enderezado" para que sea perpendicular
-		 *    a Z (método de Gram-Schmidt). Y = Z x X (producto vectorial), que es
-		 *    perpendicular a los dos. Así, en piernas y brazos, el X local siempre
-		 *    es el eje lateral y girar sobre él es flexión hacia delante.
-		 * 3. Rotación base = Rotación_padre^-1 * Rotación_mundo. Es decir, la
-		 *    rotación del hijo vista desde el padre.
-		 *
-		 * @param lateral Para segmentos que apuntan hacia el lado (clavícula,
-		 *                cadera) el X del mundo es casi paralelo a Z y
-		 *                Gram-Schmidt fallaría (dividiría entre casi 0). Para
-		 *                ellos se usa el eje Y del mundo como referencia, con el
-		 *                signo elegido para que "Elevación" positiva suba el
-		 *                hombro en los dos lados.
-		 */
-		Segment add(Segment parent, String name, String from, String to, boolean lateral) {
-			double[] a = joints.get(from), b = joints.get(to);
-			double[] d = sub(b, a);
-			double length = norm(d);
-
-			Matrix4 rotation;
-			if (length < 1e-9) {
-				// Segmento de longitud 0 (la pelvis): no tiene dirección, se deja
-				// alineado con el mundo
-				rotation = Matrix4.identity();
-			} else {
-				double[] z = scale(d, 1 / length);
-				double[] ref = lateral ? new double[] { 0, -Math.signum(d[0]), 0 } : new double[] { 1, 0, 0 };
-				// Gram-Schmidt: quitar a ref su componente en la dirección z
-				double[] x = normalize(sub(ref, scale(z, dot(ref, z))));
-				double[] y = cross(z, x);
-				rotation = Matrix4.fromAxes(x, y, z);
-			}
-			// La inversa de una rotación pura es su transpuesta (ver Matrix4.rigidInverse)
-			Matrix4 base = parent == null ? rotation : worldRotation.get(parent).rigidInverse().multiply(rotation);
-
-			Segment s = new Segment(name, length, base);
-			worldRotation.put(s, rotation);
-			if (parent != null)
-				parent.addChild(s);
-			return s;
-		}
-
-		// ---- Operaciones con vectores 3D (arrays de 3 doubles) ----
-
-		static double[] sub(double[] a, double[] b) {
-			return new double[] { a[0] - b[0], a[1] - b[1], a[2] - b[2] };
-		}
-
-		static double[] scale(double[] a, double k) {
-			return new double[] { a[0] * k, a[1] * k, a[2] * k };
-		}
-
-		/** Producto escalar: |a||b|cos(ángulo). Vale 0 si son perpendiculares. */
-		static double dot(double[] a, double[] b) {
-			return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-		}
-
-		/** Producto vectorial: vector perpendicular a a y a b (regla de la mano derecha). */
-		static double[] cross(double[] a, double[] b) {
-			return new double[] { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
-		}
-
-		static double norm(double[] a) {
-			return Math.sqrt(dot(a, a));
-		}
-
-		/** Mismo vector con longitud 1. */
-		static double[] normalize(double[] a) {
-			return scale(a, 1 / norm(a));
-		}
+		return pelvis;
 	}
 }
