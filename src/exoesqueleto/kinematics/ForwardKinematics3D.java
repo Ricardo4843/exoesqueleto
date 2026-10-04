@@ -26,7 +26,7 @@ import java.util.Map;
  *
  * Hay dos versiones del algoritmo:
  * <ul>
- * <li>RECURSIVA: la del lab2. Para un esqueleto humano (~25 segmentos) es
+ * <li>RECURSIVA: la del lab2. Para un esqueleto humano (21 segmentos) es
  * perfecta y la más fácil de leer.</li>
  * <li>ITERATIVA con pila explícita: da el mismo resultado sin recursión. Hace
  * falta si el árbol es muy PROFUNDO (por ejemplo, una cadena de 10.000

@@ -16,7 +16,7 @@ import javafx.scene.shape.TriangleMesh;
  * Meterlos en el árbol sería absurdo: un vértice no es una articulación. Lo
  * que se hace en videojuegos y software de animación (y aquí) es:
  * <ol>
- * <li>Calcular la cinemática directa solo para los ~25 segmentos (unos
+ * <li>Calcular la cinemática directa solo para los 21 segmentos (unos
  * microsegundos).</li>
  * <li>Mover cada vértice con la matriz del hueso al que está "pegado".</li>
  * </ol>

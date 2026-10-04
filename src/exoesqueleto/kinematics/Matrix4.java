@@ -131,6 +131,22 @@ public final class Matrix4 {
 	}
 
 	/**
+	 * Construye una rotación a partir de sus tres ejes locales vistos desde el
+	 * mundo (vectores unitarios y perpendiculares entre sí). Como se explica
+	 * arriba, esos ejes son justamente las COLUMNAS de la matriz, así que solo
+	 * hay que colocarlos en vertical.
+	 *
+	 * Se usa en HumanSkeleton para orientar cada segmento según las
+	 * articulaciones que se detectan en el modelo 3D del cuerpo.
+	 */
+	public static Matrix4 fromAxes(double[] x, double[] y, double[] z) {
+		return new Matrix4(new double[] {
+				x[0], y[0], z[0], 0,
+				x[1], y[1], z[1], 0,
+				x[2], y[2], z[2], 0 });
+	}
+
+	/**
 	 * Producto de matrices: devuelve this * o.
 	 *
 	 * Cuidado con el orden. Al aplicarse a un punto, (this * o) * p = this * (o *
